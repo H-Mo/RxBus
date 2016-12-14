@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:orientation="vertical"
+              android:layout_width="match_parent"
+              android:background="#aaa"
+              android:gravity="center"
+              android:layout_height="match_parent">
+
+    <Button
+        android:id="@+id/handler_Bt"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="订阅"/>
+
+    <TextView
+        android:id="@+id/text_Tv"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="20sp"
+        android:text="暂未收到事件"/>
+
+</LinearLayout>
