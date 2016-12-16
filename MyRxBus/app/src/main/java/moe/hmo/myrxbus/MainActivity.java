@@ -1,5 +1,6 @@
 package moe.hmo.myrxbus;
 
+import android.content.Intent;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
 import android.support.v7.app.AppCompatActivity;
@@ -9,9 +10,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 
-import java.io.BufferedReader;
-
-import moe.rxbus.RxBus;
+import moe.rxbus.core.RxBusCore;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
@@ -48,9 +47,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     @Override
     public void onClick(View v) {
+//        Intent intent = new Intent(this, WebActivity.class);
+//        startActivity(intent);
         // 获取编辑框的文本
         String text = text_Et.getText().toString();
         // 投递事件
-        RxBus.get().post(text);
+        RxBusCore.get().post(text);
     }
 }

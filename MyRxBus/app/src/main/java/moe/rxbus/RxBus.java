@@ -1,154 +1,113 @@
 package moe.rxbus;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
+import moe.rxbus.bean.SubscriberMethod;
+import moe.rxbus.core.RxBusCore;
 import rx.Observable;
-import rx.Subscriber;
-import rx.subjects.PublishSubject;
-import rx.subjects.SerializedSubject;
-import rx.subjects.Subject;
+import rx.Scheduler;
+import rx.Subscription;
+import rx.android.schedulers.AndroidSchedulers;
+import rx.functions.Action1;
+import rx.schedulers.Schedulers;
+
 
 /**
  * @author H-Mo
- * time 16/12/14  9:25
- * desc 用 RxJava 实现的事件总线
+ * @time 16/12/16  9:46
+ * @desc RxBus 的对外接口，在 RxBusCore 的基础上进一步封装
  */
 public class RxBus {
 
-    // 私有化的静态自身变量，volatile 用来保证原子性操作
-    private static volatile RxBus mInstance;
-    // final 定义的总线
-    private final Subject<Object,Object> mBus;
-    // 存储粘性事件的 Map
-    private final Map<Class<?>,Object> mStickyEventMap;
+    private static Map<Class<?>,List<Subscription>> subscriberMap = new HashMap<>();
 
-    // 私有化的构造器中初始化总线
-    private RxBus(){
-        // 把线程不安全的 PublishSubject 包装成线程安全的 SerializedSubject
-        mBus = new SerializedSubject<>(PublishSubject.create());
-        // 初始化，线程安全的 HashMap ,采用 stripping lock (分离锁)，效率比 HashTable 高
-        mStickyEventMap = new ConcurrentHashMap<>();
-    }
-
-    /**
-     * 单例的懒汉式，获取自身对象
-     * @return 自身的实例
-     */
-    public static RxBus get(){
-        if(mInstance == null){
-            synchronized (RxBus.class){
-                if(mInstance == null){
-                    mInstance = new RxBus();
-                }
+    public static void register(final Object obj){
+        // 获取订阅者类对象的方法集合
+        final Class<?> subscriberClz = obj.getClass();
+        Method[] methods = subscriberClz.getMethods();
+        //
+        for (final Method method : methods) {
+            // 如果该方法没有使用了 Subscribe 注解，则跳过
+            if( !method.isAnnotationPresent(Subscribe.class)){
+                continue;
             }
-        }
-        return mInstance;
-    }
-
-    /**
-     * 投递一个事件
-     * @param event 事件
-     */
-    public void post(Object event){
-        mBus.onNext(event);
-    }
-
-    /**
-     * 投递一个粘性事件
-     * @param event 事件
-     */
-    public void postSticky(Object event){
-        // 同步锁确保线程安全
-        synchronized (mStickyEventMap){
-            // key 事件类型 | value 事件
-            mStickyEventMap.put(event.getClass(),event);
-        }
-        post(event);
-    }
-
-    /**
-     *  传入需要订阅的事件类型，得到可用于订阅的被观察者对象
-     * @param eventType 事件类型
-     * @return 可用于订阅的被观察者对象
-     */
-    public <T> Observable<T> toObservable(Class<T> eventType){
-        return mBus.ofType(eventType);
-    }
-
-    /**
-     * 传入需要订阅的事件类型，得到可用于订阅的被观察者对象，并且可以收到粘性事件
-     * @param eventType 事件类型
-     * @return  可用于订阅的被观察者对象
-     */
-    public <T> Observable<T> toObservableSticky(final Class<T> eventType){
-        // 同步锁确保线程安全
-        synchronized (mStickyEventMap){
-            // 得到被观察者对象
-            Observable<T> observable = mBus.ofType(eventType);
-            // 从 Map 中取出上一个相同类型的事件
-            final Object event  = mStickyEventMap.get(eventType);
-            // 如果存在上一个相同类型的事件
-            if(event != null){
-                // 通过 mergeWith 操作符，将从 Map 中取出来的事件合并进被观察者中，并返回
-                return observable.mergeWith(Observable.create(new Observable.OnSubscribe<T>(){
-
-                    @Override
-                    public void call(Subscriber<? super T> subscriber) {
-                        // cast 将一个对象强制转换成此 Class 对象所表示的类或接口。
-                        subscriber.onNext(eventType.cast(event));
+            // 如果参数为空或者不是一个，也跳过
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            if(parameterTypes == null || parameterTypes.length != 1){
+                continue;
+            }
+            // 得到订阅者订阅的事件类型
+            final Class<?> eventType = parameterTypes[0];
+            // 得到注解对象
+            Subscribe annotation = method.getAnnotation(Subscribe.class);
+            // 订阅事件
+            Subscription subscribe = RxBusCore.get()
+                    .toObservable(eventType)
+                    .observeOn(getThreadMode(annotation))
+                    .subscribe(new Action1<Object>() {
+                @Override
+                public void call(Object t) {
+                    try {
+                        method.invoke(obj,t);
+                    } catch (IllegalAccessException e) {
+                        e.printStackTrace();
+                    } catch (InvocationTargetException e) {
+                        e.printStackTrace();
                     }
+                }
+            });
+            // 保存订阅事件到集合
+            if(!subscriberMap.containsKey(subscriberClz)){
+                subscriberMap.put(subscriberClz,new ArrayList<Subscription>());
+            }
+            List<Subscription> subscriberMethods = subscriberMap.get(subscriberClz);
+            subscriberMethods.add(subscribe);
+        }
+    }
 
-                }));
-            }else {
-                // 如果不存在上一个相同得到事件，直接返回被观察者对象
-                return observable;
+    /**
+     * 注销监听，Activity 或者 Fragment 生命周期结束前必须注销监听
+     * @param obj Activity 或者 Fragment 的对象
+     */
+    public static void unRegister(Object obj){
+        Class<?> subscriberClz = obj.getClass();
+        if(!subscriberMap.containsKey(subscriberClz)){
+            return;
+        }
+        List<Subscription> subscriberMethods = subscriberMap.get(subscriberClz);
+        if(subscriberMethods == null || subscriberMethods.size() <= 0){
+            return;
+        }
+        for (Subscription subscriber: subscriberMethods) {
+            if(subscriber != null && !subscriber.isUnsubscribed()){
+                subscriber.unsubscribe();
             }
         }
     }
 
     /**
-     * 判断是否有订阅者
+     * 根据注解配置返回需要的线程调度器
+     * @param annotation 注解对象
+     * @return 线程调度器
      */
-    public boolean hasObservers(){
-        return mBus.hasObservers();
-    }
-
-    /**
-     *  将 RxBus 的实例置为 null
-     */
-    public void reset(){
-        mInstance = null;
-    }
-
-    /**
-     *  获取指定类型的粘性事件
-     * @param eventType 事件类型
-     * @return 上一个同类型的事件
-     */
-    public <T> T getStickyEvent(Class<T> eventType){
-        synchronized (mStickyEventMap){
-            return eventType.cast(mStickyEventMap.get(eventType));
+    public static Scheduler getThreadMode(Subscribe annotation){
+        ThreadMode threadMode = annotation.threadMode();
+        switch (threadMode) {
+            case CURRENT_THREAD:    // 当前线程
+                return Schedulers.immediate();
+            case NEW_THREAD:        // 新的线程
+                return Schedulers.newThread();
+            case IO:                // 由 IO 调度(复用的子线程)
+                return Schedulers.io();
+            case MAIN:              // 主线程(UI线程)
+                return AndroidSchedulers.mainThread();
         }
+        return null;
     }
 
-    /**
-     * 移除指定类型的粘性事件
-     * @param eventType 事件类型
-     * @return 被移除的事件
-     */
-    public <T> T removeStickyEvent(Class<T> eventType) {
-        synchronized (mStickyEventMap){
-            return eventType.cast(mStickyEventMap.remove(eventType));
-        }
-    }
-
-    /**
-     * 移除所有的粘性事件
-     */
-    public void removeAllStickyEvents(){
-        synchronized (mStickyEventMap){
-            mStickyEventMap.clear();
-        }
-    }
 }
