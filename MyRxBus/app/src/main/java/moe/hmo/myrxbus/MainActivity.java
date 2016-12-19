@@ -10,7 +10,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 
-import moe.rxbus.core.RxBusCore;
+import moe.hmo.rxbus.core.RxBusCore;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
@@ -47,8 +47,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     @Override
     public void onClick(View v) {
-//        Intent intent = new Intent(this, WebActivity.class);
-//        startActivity(intent);
         // 获取编辑框的文本
         String text = text_Et.getText().toString();
         // 投递事件
